@@ -470,13 +470,5 @@ with tab4:
                 for i, grade in enumerate(['A', 'B', 'C']):
                     st.markdown(f"**{grade}:** {probabilities[i]*100:.1f}%")
 
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; padding: 20px;'>
-    <p><strong>NYC Restaurant Inspection ML Dashboard</strong></p>
-    <p>Data Source: NYC Open Data | Model: Random Forest Classifier | Accuracy: 93.8%</p>
-    <p>Created by Hieu - UC Davis Statistics '25</p>
-</div>
-""", unsafe_allow_html=True)
+
 ```
