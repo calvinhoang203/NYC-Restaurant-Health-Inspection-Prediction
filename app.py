@@ -53,15 +53,23 @@ def load_model():
     try:
         with open('models/random_forest_model.pkl', 'rb') as f:
             model = pickle.load(f)
-        return model
+        
+        # Load encoders
+        with open('models/cuisine_encoder.pkl', 'rb') as f:
+            cuisine_encoder = pickle.load(f)
+        
+        with open('models/boro_encoder.pkl', 'rb') as f:
+            boro_encoder = pickle.load(f)
+        
+        return model, cuisine_encoder, boro_encoder
     except FileNotFoundError:
-        return None
+        return None, None, None
     except Exception as e:
         st.warning(f"Model file not found or error loading model: {str(e)}")
-        return None
+        return None, None, None
 
 df = load_data()
-model = load_model()
+model, cuisine_encoder, boro_encoder = load_model()
 
 # Check if data is loaded
 if df is None:
@@ -443,8 +451,8 @@ with tab3:
 with tab4:
     st.header("Predict Restaurant Grade")
     
-    if model is None:
-        st.error("Model file not found. Please ensure random_forest_model.pkl is in the models/ folder.")
+    if model is None or cuisine_encoder is None or boro_encoder is None:
+        st.error("Model files not found. Please ensure random_forest_model.pkl and encoder files are in the models/ folder.")
     else:
         st.markdown("Enter restaurant inspection details to predict the grade:")
         
@@ -468,46 +476,43 @@ with tab4:
             boro_input = st.selectbox("Borough", sorted(df['BORO'].dropna().unique()))
         
         if st.button("🎯 Predict Grade", type="primary"):
-            # Encode inputs (simplified - you'd need actual encoders)
-            from sklearn.preprocessing import LabelEncoder
-            
-            le_cuisine = LabelEncoder()
-            le_cuisine.fit(df['CUISINE'].dropna())
-            cuisine_encoded = le_cuisine.transform([cuisine_input])[0]
-            
-            le_boro = LabelEncoder()
-            le_boro.fit(df['BORO'].dropna())
-            boro_encoded = le_boro.transform([boro_input])[0]
-            
-            # Make prediction
-            features = [[total_viol, critical_viol, month, day_encoded, cuisine_encoded, boro_encoded]]
-            prediction = model.predict(features)[0]
-            probabilities = model.predict_proba(features)[0]
-            
-            st.markdown("---")
-            st.subheader("Prediction Results")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown(f"### Predicted Grade: **{prediction}**")
-                if prediction == 'A':
-                    st.success("Excellent!")
-                elif prediction == 'B':
-                    st.warning("Needs Improvement")
-                else:
-                    st.error("Critical Issues")
-            
-            with col2:
-                st.markdown("### Confidence:")
-                max_prob = max(probabilities)
-                st.progress(max_prob)
-                st.markdown(f"**{max_prob*100:.1f}%** confidence")
-            
-            with col3:
-                st.markdown("### Probabilities:")
-                for i, grade in enumerate(['A', 'B', 'C']):
-                    st.markdown(f"**{grade}:** {probabilities[i]*100:.1f}%")
+            try:
+                # Encode inputs using saved encoders
+                cuisine_encoded = cuisine_encoder.transform([cuisine_input])[0]
+                boro_encoded = boro_encoder.transform([boro_input])[0]
+                
+                # Make prediction
+                features = [[total_viol, critical_viol, month, day_encoded, cuisine_encoded, boro_encoded]]
+                prediction = model.predict(features)[0]
+                probabilities = model.predict_proba(features)[0]
+                
+                st.markdown("---")
+                st.subheader("Prediction Results")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.markdown(f"### Predicted Grade: **{prediction}**")
+                    if prediction == 'A':
+                        st.success("Excellent!")
+                    elif prediction == 'B':
+                        st.warning("Needs Improvement")
+                    else:
+                        st.error("Critical Issues")
+                
+                with col2:
+                    st.markdown("### Confidence:")
+                    max_prob = max(probabilities)
+                    st.progress(max_prob)
+                    st.markdown(f"**{max_prob*100:.1f}%** confidence")
+                
+                with col3:
+                    st.markdown("### Probabilities:")
+                    for i, grade in enumerate(['A', 'B', 'C']):
+                        st.markdown(f"**{grade}:** {probabilities[i]*100:.1f}%")
+            except Exception as e:
+                st.error(f"Error making prediction: {str(e)}")
+                st.info("Make sure the cuisine and borough values match those in the training data.")
 
 # Footer
 st.markdown("---")
