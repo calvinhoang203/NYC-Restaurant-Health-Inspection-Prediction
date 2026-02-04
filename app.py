@@ -38,14 +38,20 @@ st.markdown("""
 # Load data
 @st.cache_data
 def load_data():
+    import os
+    data_path = 'data/inspections_clean.csv'
+    
+    # Check if file exists first
+    if not os.path.exists(data_path):
+        return None
+    
     try:
-        df = pd.read_csv('data/inspections_clean.csv')
+        df = pd.read_csv(data_path)
         df['INSPECTION_DATE'] = pd.to_datetime(df['INSPECTION_DATE'])
         return df
     except FileNotFoundError:
         return None
     except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
         return None
 
 @st.cache_resource
