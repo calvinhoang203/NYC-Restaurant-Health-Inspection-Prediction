@@ -41,8 +41,24 @@ def load_data():
     import os
     data_path = 'data/inspections_clean.csv'
     
+    # Debug: List current directory contents
+    current_dir = os.listdir('.')
+    data_dir_exists = os.path.exists('data')
+    data_dir_contents = []
+    if data_dir_exists:
+        data_dir_contents = os.listdir('data')
+    
     # Check if file exists first
     if not os.path.exists(data_path):
+        # Return debug info in error message
+        st.error(f"""
+        **Debug Info:**
+        - Current directory: {os.getcwd()}
+        - Files in current dir: {', '.join(current_dir[:10])}
+        - Data directory exists: {data_dir_exists}
+        - Data directory contents: {', '.join(data_dir_contents) if data_dir_contents else 'None'}
+        - Looking for: {data_path}
+        """)
         return None
     
     try:
@@ -52,6 +68,7 @@ def load_data():
     except FileNotFoundError:
         return None
     except Exception as e:
+        st.error(f"Error reading CSV: {str(e)}")
         return None
 
 @st.cache_resource
