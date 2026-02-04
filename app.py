@@ -38,9 +38,15 @@ st.markdown("""
 # Load data
 @st.cache_data
 def load_data():
-    df = pd.read_csv('data/inspections_clean.csv')
-    df['INSPECTION_DATE'] = pd.to_datetime(df['INSPECTION_DATE'])
-    return df
+    try:
+        df = pd.read_csv('data/inspections_clean.csv')
+        df['INSPECTION_DATE'] = pd.to_datetime(df['INSPECTION_DATE'])
+        return df
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return None
 
 @st.cache_resource
 def load_model():
@@ -48,11 +54,44 @@ def load_model():
         with open('models/random_forest_model.pkl', 'rb') as f:
             model = pickle.load(f)
         return model
-    except:
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        st.warning(f"Model file not found or error loading model: {str(e)}")
         return None
 
 df = load_data()
 model = load_model()
+
+# Check if data is loaded
+if df is None:
+    st.error("""
+    ## ⚠️ Data File Not Found
+    
+    The required data file `data/inspections_clean.csv` is not found in the repository.
+    
+    **To fix this:**
+    
+    1. **If you have the data file locally:**
+       - Ensure the `data/` directory exists in your repository
+       - Add `inspections_clean.csv` to the `data/` directory
+       - Commit and push the file to your repository
+    
+    2. **If you need to generate the data:**
+       - Run the `02_clean.ipynb` notebook to process the raw data
+       - This will create `data/inspections_clean.csv`
+       - Then commit and push the file
+    
+    3. **For Streamlit Cloud deployment:**
+       - The data file needs to be in your GitHub repository
+       - Check that `data/inspections_clean.csv` is not in `.gitignore`
+       - If it's too large, consider using Streamlit's file uploader or external storage
+    
+    **Note:** The `/data` directory is currently in `.gitignore`. You may need to:
+    - Remove `/data` from `.gitignore` if you want to commit the data file
+    - Or use a different approach like storing data in a cloud storage service
+    """)
+    st.stop()
 
 # Sidebar filters
 st.sidebar.title("🔍 Filters")
