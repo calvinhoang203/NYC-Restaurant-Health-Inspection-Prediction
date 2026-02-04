@@ -1,1 +1,6 @@
-/data
+# Ignore raw data files
+/data/nyc_restaurant_inspections_raw.csv
+/data/raw/
+
+# Allow cleaned data for deployment
+# /data/inspections_clean.csv
