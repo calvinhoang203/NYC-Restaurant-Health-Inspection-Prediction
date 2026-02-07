@@ -4,7 +4,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pickle
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
+import requests
 
 # Page config
 st.set_page_config(
@@ -35,13 +37,129 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Load data
+# ============================================
+# DATA UPDATE FUNCTIONS (NEW CODE)
+# ============================================
+
+def download_nyc_data():
+    """Download latest data from NYC Open Data API"""
+    url = "https://data.cityofnewyork.us/resource/43nn-pn8j.csv?$limit=300000"
+    
+    try:
+        response = requests.get(url, timeout=120)
+        response.raise_for_status()
+        
+        # Save to raw data file
+        os.makedirs('data', exist_ok=True)
+        with open('data/nyc_restaurant_inspections_raw.csv', 'wb') as f:
+            f.write(response.content)
+        
+        return True, datetime.now()
+    except requests.exceptions.RequestException as e:
+        return False, str(e)
+    except Exception as e:
+        return False, str(e)
+
+def check_data_freshness():
+    """Check if data needs updating (older than 24 hours)"""
+    raw_csv_path = 'data/nyc_restaurant_inspections_raw.csv'
+    
+    if not os.path.exists(raw_csv_path):
+        return True  # No file exists, need to download
+    
+    # Check file age
+    last_modified = datetime.fromtimestamp(os.path.getmtime(raw_csv_path))
+    age = datetime.now() - last_modified
+    
+    return age > timedelta(days=1)
+
+def process_raw_data():
+    """Process raw data into clean format (simplified from 02_clean.ipynb)"""
+    try:
+        # Read raw data
+        df = pd.read_csv('data/nyc_restaurant_inspections_raw.csv')
+        
+        # Convert date
+        df['INSPECTION DATE'] = pd.to_datetime(df['INSPECTION DATE'], errors='coerce')
+        
+        # Remove uninspected
+        df_clean = df[df['INSPECTION DATE'].dt.year > 1900].copy()
+        
+        # Keep only graded inspections
+        df_clean = df_clean[df_clean['GRADE'].isin(['A', 'B', 'C'])].copy()
+        
+        # Aggregate to one row per inspection
+        inspection_agg = df_clean.groupby(['CAMIS', 'INSPECTION DATE']).agg({
+            'DBA': 'first',
+            'BORO': 'first',
+            'ZIPCODE': 'first',
+            'CUISINE DESCRIPTION': 'first',
+            'SCORE': 'first',
+            'GRADE': 'first',
+            'VIOLATION CODE': 'count',
+            'CRITICAL FLAG': lambda x: (x == 'Critical').sum()
+        }).reset_index()
+        
+        # Rename columns
+        inspection_agg.columns = [
+            'CAMIS', 'INSPECTION_DATE', 'RESTAURANT_NAME', 'BORO',
+            'ZIPCODE', 'CUISINE', 'SCORE', 'GRADE',
+            'TOTAL_VIOLATIONS', 'CRITICAL_VIOLATIONS'
+        ]
+        
+        # Add time features
+        inspection_agg['YEAR'] = inspection_agg['INSPECTION_DATE'].dt.year
+        inspection_agg['MONTH'] = inspection_agg['INSPECTION_DATE'].dt.month
+        inspection_agg['DAY_OF_WEEK'] = inspection_agg['INSPECTION_DATE'].dt.dayofweek
+        inspection_agg['QUARTER'] = inspection_agg['INSPECTION_DATE'].dt.quarter
+        
+        # Clean borough names
+        boro_map = {
+            'Manhattan': 'Manhattan', 'Bronx': 'Bronx', 'Brooklyn': 'Brooklyn',
+            'Queens': 'Queens', 'Staten Island': 'Staten Island',
+            '1': 'Manhattan', '2': 'Bronx', '3': 'Brooklyn',
+            '4': 'Queens', '5': 'Staten Island'
+        }
+        inspection_agg['BORO'] = inspection_agg['BORO'].astype(str).map(boro_map)
+        
+        # Drop missing essential columns
+        inspection_agg = inspection_agg.dropna(subset=['SCORE', 'GRADE', 'CUISINE', 'BORO'])
+        
+        # Save processed data
+        inspection_agg.to_csv('data/inspections_clean.csv', index=False)
+        
+        return True, len(inspection_agg)
+    except Exception as e:
+        return False, str(e)
+
+# ============================================
+# AUTO-REFRESH CHECK (NEW CODE)
+# ============================================
+
+# Check if data needs updating when app loads
+if check_data_freshness():
+    with st.spinner("🔄 Checking for data updates..."):
+        success, result = download_nyc_data()
+        if success:
+            st.success(f"✅ Downloaded fresh data at {result.strftime('%Y-%m-%d %H:%M')}")
+            # Process the raw data
+            process_success, process_result = process_raw_data()
+            if process_success:
+                st.success(f"✅ Processed {process_result:,} inspections")
+            else:
+                st.warning(f"⚠️ Could not process data: {process_result}")
+        else:
+            st.warning(f"⚠️ Could not auto-update data: {result}. Using existing data.")
+
+# ============================================
+# LOAD DATA (ORIGINAL CODE)
+# ============================================
+
 @st.cache_data
 def load_data():
-    import os
     data_path = 'data/inspections_clean.csv'
     
-    # Debug: List current directory contents
+    # Debug info
     current_dir = os.listdir('.')
     data_dir_exists = os.path.exists('data')
     data_dir_contents = []
@@ -50,7 +168,6 @@ def load_data():
     
     # Check if file exists first
     if not os.path.exists(data_path):
-        # Return debug info in error message
         st.error(f"""
         **Debug Info:**
         - Current directory: {os.getcwd()}
@@ -77,7 +194,6 @@ def load_model():
         with open('models/random_forest_model.pkl', 'rb') as f:
             model = pickle.load(f)
         
-        # Load encoders
         with open('models/cuisine_encoder.pkl', 'rb') as f:
             cuisine_encoder = pickle.load(f)
         
@@ -124,7 +240,10 @@ if df is None:
     """)
     st.stop()
 
-# Sidebar filters
+# ============================================
+# SIDEBAR FILTERS (ORIGINAL CODE)
+# ============================================
+
 st.sidebar.title("🔍 Filters")
 st.sidebar.markdown("---")
 
@@ -161,7 +280,60 @@ if len(date_range) == 2:
 st.sidebar.markdown("---")
 st.sidebar.info(f"**{len(filtered_df):,}** inspections matched")
 
-# Main dashboard
+# ============================================
+# DATA STATUS & MANUAL REFRESH (NEW CODE)
+# ============================================
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📊 Data Status")
+
+# Show last update time
+raw_csv_path = 'data/nyc_restaurant_inspections_raw.csv'
+clean_csv_path = 'data/inspections_clean.csv'
+
+if os.path.exists(clean_csv_path):
+    last_modified = datetime.fromtimestamp(os.path.getmtime(clean_csv_path))
+    age = datetime.now() - last_modified
+    
+    st.sidebar.info(f"**Last updated:** {last_modified.strftime('%Y-%m-%d %H:%M')}")
+    
+    # Show data age with color coding
+    if age.days == 0:
+        st.sidebar.success(f"Data age: Today")
+    elif age.days == 1:
+        st.sidebar.success(f"Data age: 1 day")
+    elif age.days < 7:
+        st.sidebar.warning(f"Data age: {age.days} days")
+    else:
+        st.sidebar.error(f"Data age: {age.days} days")
+
+# Manual refresh button
+if st.sidebar.button("🔄 Force Refresh Data", help="Download and process latest data from NYC Open Data"):
+    with st.spinner("Downloading latest data from NYC Open Data..."):
+        success, result = download_nyc_data()
+        if success:
+            st.sidebar.success(f"✅ Data downloaded at {result.strftime('%H:%M')}")
+            
+            # Process the data
+            with st.spinner("Processing data..."):
+                process_success, process_result = process_raw_data()
+                if process_success:
+                    st.sidebar.success(f"✅ Processed {process_result:,} inspections")
+                    st.cache_data.clear()  # Clear cache to reload new data
+                    st.rerun()  # Reload the app
+                else:
+                    st.sidebar.error(f"❌ Processing failed: {process_result}")
+        else:
+            st.sidebar.error(f"❌ Download failed: {result}")
+
+# Data source info
+st.sidebar.caption("Data source: NYC Open Data")
+st.sidebar.caption("Updates: Daily (automatic)")
+
+# ============================================
+# MAIN DASHBOARD (ORIGINAL CODE - NO CHANGES)
+# ============================================
+
 st.title("🍽️ NYC Restaurant Inspection Analytics")
 st.markdown("### Machine Learning Analysis of Restaurant Health Grades")
 st.markdown("---")
@@ -500,11 +672,9 @@ with tab4:
         
         if st.button("🎯 Predict Grade", type="primary"):
             try:
-                # Encode inputs using saved encoders
                 cuisine_encoded = cuisine_encoder.transform([cuisine_input])[0]
                 boro_encoded = boro_encoder.transform([boro_input])[0]
                 
-                # Make prediction
                 features = [[total_viol, critical_viol, month, day_encoded, cuisine_encoded, boro_encoded]]
                 prediction = model.predict(features)[0]
                 probabilities = model.predict_proba(features)[0]
@@ -542,6 +712,6 @@ st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p><strong>NYC Restaurant Inspection ML Dashboard</strong></p>
+    <p>Data Source: NYC Open Data | Model: Random Forest Classifier | Accuracy: 93.8%</p>
 </div>
 """, unsafe_allow_html=True)
-
