@@ -95,6 +95,8 @@ Class imbalance is a real problem - when 87% of your data is one class, you need
 
 ## Next Steps If I Had More Time
 
+- Automate daily data refresh from NYC API
+- Add Apache Airflow for pipeline orchestration
 - Add features like inspection history and violation types
 - Try SMOTE or class weighting to handle the imbalance
 - Build separate models for each grade instead of one multi-class model
