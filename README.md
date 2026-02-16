@@ -114,7 +114,3 @@ Live dashboard: https://calvinhoang203-nyc-restaurant-health-inspection-pred-app
 ## Data Source
 
 NYC Department of Health and Mental Hygiene via NYC Open Data
-
-## License
-
-MIT
