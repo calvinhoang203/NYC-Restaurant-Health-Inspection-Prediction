@@ -76,8 +76,16 @@ def check_data_freshness():
 def process_raw_data():
     """Process raw data into clean format (simplified from 02_clean.ipynb)"""
     try:
+        # Check if raw data file exists
+        if not os.path.exists('data/nyc_restaurant_inspections_raw.csv'):
+            return False, "Raw data file not found"
+        
         # Read raw data
         df = pd.read_csv('data/nyc_restaurant_inspections_raw.csv')
+        
+        # Check if dataframe is empty
+        if len(df) == 0:
+            return False, "Raw data file is empty"
         
         # Convert date
         df['INSPECTION DATE'] = pd.to_datetime(df['INSPECTION DATE'], errors='coerce')
@@ -125,6 +133,10 @@ def process_raw_data():
         # Drop missing essential columns
         inspection_agg = inspection_agg.dropna(subset=['SCORE', 'GRADE', 'CUISINE', 'BORO'])
         
+        # Check if processed data is empty
+        if len(inspection_agg) == 0:
+            return False, "No valid inspections after processing"
+        
         # Save processed data
         inspection_agg.to_csv('data/inspections_clean.csv', index=False)
         
@@ -137,7 +149,8 @@ def process_raw_data():
 # ============================================
 
 # Check if data needs updating when app loads
-if check_data_freshness():
+# Only check if clean data doesn't exist or is stale
+if not os.path.exists('data/inspections_clean.csv') or check_data_freshness():
     with st.spinner("🔄 Checking for data updates..."):
         success, result = download_nyc_data()
         if success:
@@ -146,6 +159,7 @@ if check_data_freshness():
             process_success, process_result = process_raw_data()
             if process_success:
                 st.success(f"✅ Processed {process_result:,} inspections")
+                load_data.clear()  # Clear cache to reload new data
             else:
                 st.warning(f"⚠️ Could not process data: {process_result}")
         else:
@@ -319,7 +333,7 @@ if st.sidebar.button("🔄 Force Refresh Data", help="Download and process lates
                 process_success, process_result = process_raw_data()
                 if process_success:
                     st.sidebar.success(f"✅ Processed {process_result:,} inspections")
-                    st.cache_data.clear()  # Clear cache to reload new data
+                    load_data.clear()  # Clear cache to reload new data
                     st.rerun()  # Reload the app
                 else:
                     st.sidebar.error(f"❌ Processing failed: {process_result}")
@@ -342,10 +356,11 @@ st.markdown("---")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+    delta_pct = (len(filtered_df)/len(df)*100) if len(df) > 0 else 0
     st.metric(
         label="Total Inspections",
         value=f"{len(filtered_df):,}",
-        delta=f"{len(filtered_df)/len(df)*100:.1f}% of data"
+        delta=f"{delta_pct:.1f}% of data"
     )
 
 with col2:
@@ -366,7 +381,8 @@ with col3:
     )
 
 with col4:
-    critical_pct = filtered_df['CRITICAL_VIOLATIONS'].sum() / filtered_df['TOTAL_VIOLATIONS'].sum() * 100
+    total_violations_sum = filtered_df['TOTAL_VIOLATIONS'].sum()
+    critical_pct = (filtered_df['CRITICAL_VIOLATIONS'].sum() / total_violations_sum * 100) if total_violations_sum > 0 else 0
     st.metric(
         label="Critical Violation Rate",
         value=f"{critical_pct:.1f}%",
@@ -380,6 +396,10 @@ tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "🔍 Explore Data", "🤖 Mo
 
 with tab1:
     st.header("Data Overview")
+    
+    if len(filtered_df) == 0:
+        st.warning("⚠️ No data matches the selected filters. Please adjust your filters.")
+        st.stop()
     
     col1, col2 = st.columns(2)
     
@@ -423,24 +443,30 @@ with tab1:
     
     with col1:
         # Grades by borough
-        boro_grade = pd.crosstab(filtered_df['BORO'], filtered_df['GRADE'], normalize='index') * 100
-        fig_boro = go.Figure()
-        for grade in ['A', 'B', 'C']:
-            if grade in boro_grade.columns:
-                fig_boro.add_trace(go.Bar(
-                    name=grade,
-                    x=boro_grade.index,
-                    y=boro_grade[grade],
-                    marker_color={'A': '#2ecc71', 'B': '#f39c12', 'C': '#e74c3c'}[grade]
-                ))
-        fig_boro.update_layout(
-            title="Grade Distribution by Borough (%)",
-            barmode='group',
-            height=400,
-            xaxis_title="Borough",
-            yaxis_title="Percentage"
-        )
-        st.plotly_chart(fig_boro, use_container_width=True)
+        if 'BORO' in filtered_df.columns and 'GRADE' in filtered_df.columns:
+            boro_grade = pd.crosstab(filtered_df['BORO'], filtered_df['GRADE'], normalize='index') * 100
+            if len(boro_grade) > 0:
+                fig_boro = go.Figure()
+                for grade in ['A', 'B', 'C']:
+                    if grade in boro_grade.columns:
+                        fig_boro.add_trace(go.Bar(
+                            name=grade,
+                            x=boro_grade.index,
+                            y=boro_grade[grade],
+                            marker_color={'A': '#2ecc71', 'B': '#f39c12', 'C': '#e74c3c'}[grade]
+                        ))
+                fig_boro.update_layout(
+                    title="Grade Distribution by Borough (%)",
+                    barmode='group',
+                    height=400,
+                    xaxis_title="Borough",
+                    yaxis_title="Percentage"
+                )
+                st.plotly_chart(fig_boro, use_container_width=True)
+            else:
+                st.info("No borough/grade data available")
+        else:
+            st.info("Missing required columns for borough analysis")
     
     with col2:
         # Violations by grade
@@ -462,30 +488,40 @@ with tab1:
 with tab2:
     st.header("Explore the Data")
     
+    if len(filtered_df) == 0:
+        st.warning("⚠️ No data matches the selected filters. Please adjust your filters.")
+        st.stop()
+    
     # Time series
     st.subheader("Inspection Trends Over Time")
-    monthly = filtered_df.groupby(filtered_df['INSPECTION_DATE'].dt.to_period('M')).agg({
-        'SCORE': 'mean',
-        'CAMIS': 'count'
-    }).reset_index()
-    monthly['INSPECTION_DATE'] = monthly['INSPECTION_DATE'].dt.to_timestamp()
-    
-    fig_time = make_subplots(specs=[[{"secondary_y": True}]])
-    fig_time.add_trace(
-        go.Scatter(x=monthly['INSPECTION_DATE'], y=monthly['SCORE'], 
-                   name="Avg Score", line=dict(color='#e74c3c', width=3)),
-        secondary_y=False
-    )
-    fig_time.add_trace(
-        go.Bar(x=monthly['INSPECTION_DATE'], y=monthly['CAMIS'], 
-               name="Inspection Count", marker_color='#3498db', opacity=0.3),
-        secondary_y=True
-    )
-    fig_time.update_xaxes(title_text="Date")
-    fig_time.update_yaxes(title_text="Average Score", secondary_y=False)
-    fig_time.update_yaxes(title_text="Inspection Count", secondary_y=True)
-    fig_time.update_layout(height=400, title="Inspection Trends")
-    st.plotly_chart(fig_time, use_container_width=True)
+    try:
+        monthly = filtered_df.groupby(filtered_df['INSPECTION_DATE'].dt.to_period('M')).agg({
+            'SCORE': 'mean',
+            'CAMIS': 'count'
+        }).reset_index()
+        monthly['INSPECTION_DATE'] = monthly['INSPECTION_DATE'].dt.to_timestamp()
+        
+        if len(monthly) > 0:
+            fig_time = make_subplots(specs=[[{"secondary_y": True}]])
+            fig_time.add_trace(
+                go.Scatter(x=monthly['INSPECTION_DATE'], y=monthly['SCORE'], 
+                           name="Avg Score", line=dict(color='#e74c3c', width=3)),
+                secondary_y=False
+            )
+            fig_time.add_trace(
+                go.Bar(x=monthly['INSPECTION_DATE'], y=monthly['CAMIS'], 
+                       name="Inspection Count", marker_color='#3498db', opacity=0.3),
+                secondary_y=True
+            )
+            fig_time.update_xaxes(title_text="Date")
+            fig_time.update_yaxes(title_text="Average Score", secondary_y=False)
+            fig_time.update_yaxes(title_text="Inspection Count", secondary_y=True)
+            fig_time.update_layout(height=400, title="Inspection Trends")
+            st.plotly_chart(fig_time, use_container_width=True)
+        else:
+            st.info("No time series data available")
+    except Exception as e:
+        st.error(f"Error creating time series chart: {str(e)}")
     
     st.markdown("---")
     
@@ -494,42 +530,56 @@ with tab2:
     with col1:
         # Top cuisines by score
         st.subheader("Cuisines with Highest Scores")
-        cuisine_stats = filtered_df.groupby('CUISINE').agg({
-            'SCORE': 'mean',
-            'CAMIS': 'count'
-        }).reset_index()
-        cuisine_stats = cuisine_stats[cuisine_stats['CAMIS'] >= 20]
-        top_10 = cuisine_stats.nlargest(10, 'SCORE')
-        
-        fig_cuisine = px.bar(
-            top_10,
-            x='SCORE',
-            y='CUISINE',
-            orientation='h',
-            color='SCORE',
-            color_continuous_scale='Reds',
-            title="Top 10 Cuisines (min 20 inspections)"
-        )
-        fig_cuisine.update_layout(height=500, showlegend=False)
-        st.plotly_chart(fig_cuisine, use_container_width=True)
+        try:
+            cuisine_stats = filtered_df.groupby('CUISINE').agg({
+                'SCORE': 'mean',
+                'CAMIS': 'count'
+            }).reset_index()
+            cuisine_stats = cuisine_stats[cuisine_stats['CAMIS'] >= 20]
+            top_10 = cuisine_stats.nlargest(10, 'SCORE')
+            
+            if len(top_10) > 0:
+                fig_cuisine = px.bar(
+                    top_10,
+                    x='SCORE',
+                    y='CUISINE',
+                    orientation='h',
+                    color='SCORE',
+                    color_continuous_scale='Reds',
+                    title="Top 10 Cuisines (min 20 inspections)"
+                )
+                fig_cuisine.update_layout(height=500, showlegend=False)
+                st.plotly_chart(fig_cuisine, use_container_width=True)
+            else:
+                st.info("No cuisines meet the minimum inspection threshold (20)")
+        except Exception as e:
+            st.error(f"Error creating cuisine chart: {str(e)}")
     
     with col2:
         # Violation patterns
         st.subheader("Violation Patterns")
         
         # Critical vs total violations scatter
-        sample_df = filtered_df.sample(min(5000, len(filtered_df)))
-        fig_scatter = px.scatter(
-            sample_df,
-            x='TOTAL_VIOLATIONS',
-            y='CRITICAL_VIOLATIONS',
-            color='GRADE',
-            color_discrete_map={'A': '#2ecc71', 'B': '#f39c12', 'C': '#e74c3c'},
-            opacity=0.6,
-            title="Critical vs Total Violations"
-        )
-        fig_scatter.update_layout(height=500)
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        try:
+            sample_size = min(5000, len(filtered_df))
+            sample_df = filtered_df.sample(sample_size, random_state=42) if len(filtered_df) > 0 else filtered_df
+            
+            if len(sample_df) > 0 and 'TOTAL_VIOLATIONS' in sample_df.columns and 'CRITICAL_VIOLATIONS' in sample_df.columns:
+                fig_scatter = px.scatter(
+                    sample_df,
+                    x='TOTAL_VIOLATIONS',
+                    y='CRITICAL_VIOLATIONS',
+                    color='GRADE',
+                    color_discrete_map={'A': '#2ecc71', 'B': '#f39c12', 'C': '#e74c3c'},
+                    opacity=0.6,
+                    title="Critical vs Total Violations"
+                )
+                fig_scatter.update_layout(height=500)
+                st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.info("No violation data available")
+        except Exception as e:
+            st.error(f"Error creating violation scatter plot: {str(e)}")
     
     # Data table
     st.subheader("Raw Data Sample")
